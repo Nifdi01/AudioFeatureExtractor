@@ -4,6 +4,8 @@ import torch
 import matplotlib.pyplot as plt
 import sounddevice as sd
 import scipy.io.wavfile as wav
+import librosa
+
 st.set_option('deprecation.showPyplotGlobalUse', False)
 
 def plot_pitch(waveform, sr, pitch):
@@ -25,6 +27,27 @@ def plot_pitch(waveform, sr, pitch):
     axis2.plot(time_axis, pitch_np, linewidth=2, label="Pitch", color="green")
     st.pyplot(figure)
 
+def plot_waveform(waveform, sr, title="Waveform"):
+    waveform = waveform.numpy()
+
+    num_channels, num_frames = waveform.shape
+    time_axis = torch.arange(0, num_frames) / sr
+
+    plt.figure()
+    plt.plot(time_axis, waveform[0], linewidth=1)
+    plt.grid(True)
+    plt.title(title)
+    st.pyplot()
+
+
+def plot_spectrogram(specgram, title=None, ylabel="freq_bin"):
+    fig, axs = plt.subplots(1, 1)
+    axs.set_title(title or "Spectrogram (db)")
+    axs.set_ylabel(ylabel)
+    axs.set_xlabel("frame")
+    im = axs.imshow(librosa.power_to_db(specgram), origin="lower", aspect="auto")
+    fig.colorbar(im, ax=axs)
+    st.pyplot(fig)
 
 
 # Define the Streamlit app
@@ -45,7 +68,7 @@ if record_button:
     st.sidebar.text("Audio recorded successfully!")
 
     # Save the audio data as a WAV file
-    filename = "audiofiles/output.wav"
+    filename = "audiofiles/download.wav"
     wav.write(filename, sample_rate, audio_data)
     st.sidebar.text(f"Audio saved as {filename}")
 
@@ -56,13 +79,7 @@ if "audio_data" in locals():
 
     # Display the waveform
     st.subheader("Audio Waveform")
-    waveform_fig = plt.figure(figsize=(10, 4))
-    for channel in range(waveform.shape[0]):
-        plt.plot(waveform[channel].detach().numpy())  # Use detach() here
-    plt.title("Audio Waveform")
-    plt.xlabel("Sample Index")
-    plt.ylabel("Amplitude")
-    st.pyplot(waveform_fig)
+    plot_waveform(waveform, sample_rate, title="Audio Waveform")
 
     # Resample (if needed)
     target_sample_rate = 16000  # Example target sample rate
@@ -72,8 +89,8 @@ if "audio_data" in locals():
 
     # Calculate MFCCs
     n_mfcc = 10  # Number of MFCC coefficients
-    n_fft = 100  # You can adjust this based on your audio data
-    hop_length = 40  # You can adjust this based on your audio data
+    n_fft = 20  # You can adjust this based on your audio data
+    hop_length = 10  # You can adjust this based on your audio data
 
     # Calculate the maximum possible padding
     max_padding = n_fft - hop_length
@@ -81,35 +98,15 @@ if "audio_data" in locals():
     mfcc_transform = torchaudio.transforms.MFCC(
         sample_rate=target_sample_rate,
         n_mfcc=n_mfcc,
-        melkwargs={'n_fft': n_fft, 'hop_length': hop_length}
+        melkwargs={'n_fft': max_padding, 'hop_length': hop_length}
     )
 
     mfcc = mfcc_transform(waveform)
 
-
     # Display MFCCs
     st.subheader("MFCC")
-    mfcc_fig = plt.figure(figsize=(10, 4))
     for channel in range(mfcc.shape[0]):
-        num_frames, num_coefficients = mfcc[channel].shape
-        time_axis = torch.linspace(0, duration, num_frames)
-        coefficient_axis = torch.arange(num_coefficients)
-
-        plt.imshow(
-            mfcc[channel].detach().numpy(),
-            cmap='viridis',
-            origin='lower',
-            extent=[time_axis.min(), time_axis.max(), coefficient_axis.min(), coefficient_axis.max()],  # Set extent for both x and y axes
-            aspect='auto'
-        )
-
-        plt.title("MFCC")
-        plt.xlabel("Time (s)")
-        plt.ylabel("MFCC Coefficient")
-        plt.colorbar(format="%+2.0f dB")
-
-    st.pyplot(mfcc_fig)
-
+        plot_spectrogram(mfcc[channel], title="MFCC")
 
     # Calculate Pitch
     n_steps = 2  # Number of semitones to shift the pitch (adjust as needed)
@@ -166,7 +163,6 @@ if "audio_data" in locals():
     plt.ylabel("Frequency (Hz)")
     plt.colorbar(format="%+2.0f dB")
     st.pyplot(plt.gcf())  # Use st.pyplot to display the figure in Streamlit
-
 
     # Audio Player
     st.subheader("Audio Player")
