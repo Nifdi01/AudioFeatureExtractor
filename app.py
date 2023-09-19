@@ -1,12 +1,16 @@
+import torch
 import streamlit as st
 import torchaudio
-import torch
+import torchaudio.functional as F
+import torchaudio.transforms as T
 import matplotlib.pyplot as plt
 import sounddevice as sd
 import scipy.io.wavfile as wav
 import librosa
+from IPython.display import Audio
 
 st.set_option('deprecation.showPyplotGlobalUse', False)
+
 
 def plot_pitch(waveform, sr, pitch):
     figure, axis = plt.subplots(1, 1)
@@ -15,17 +19,14 @@ def plot_pitch(waveform, sr, pitch):
 
     end_time = waveform.shape[1] / sr
     time_axis = torch.linspace(0, end_time, waveform.shape[1])
-    
-    # Convert waveform and pitch to NumPy arrays with detach()
-    waveform_np = waveform[0].detach().numpy()
-    pitch_np = pitch[0].detach().numpy()
-    
-    axis.plot(time_axis, waveform_np, linewidth=1, color="gray", alpha=0.3)
+    axis.plot(time_axis, waveform[0], linewidth=1, color="gray", alpha=0.3)
 
     axis2 = axis.twinx()
     time_axis = torch.linspace(0, end_time, pitch.shape[1])
-    axis2.plot(time_axis, pitch_np, linewidth=2, label="Pitch", color="green")
-    st.pyplot(figure)
+    axis2.plot(time_axis, pitch[0], linewidth=2, label="Pitch", color="green")
+
+    axis2.legend(loc=0)
+    st.pyplot(figure)  # Display the Matplotlib figure in Streamlit
 
 def plot_waveform(waveform, sr, title="Waveform"):
     waveform = waveform.numpy()
@@ -48,6 +49,14 @@ def plot_spectrogram(specgram, title=None, ylabel="freq_bin"):
     im = axs.imshow(librosa.power_to_db(specgram), origin="lower", aspect="auto")
     fig.colorbar(im, ax=axs)
     st.pyplot(fig)
+    
+def plot_fbank(fbank, title=None):
+    fig, axs = plt.subplots(1, 1)
+    axs.set_title(title or "Filter bank")
+    axs.imshow(fbank, aspect="auto")
+    axs.set_ylabel("frequency bin")
+    axs.set_xlabel("mel bin")
+    st.pyplot(fig)
 
 
 # Define the Streamlit app
@@ -68,7 +77,7 @@ if record_button:
     st.sidebar.text("Audio recorded successfully!")
 
     # Save the audio data as a WAV file
-    filename = "audiofiles/download.wav"
+    filename = "audiofiles/output.wav"
     wav.write(filename, sample_rate, audio_data)
     st.sidebar.text(f"Audio saved as {filename}")
 
@@ -77,8 +86,11 @@ if "audio_data" in locals():
     # Load the recorded audio file
     waveform, sample_rate = torchaudio.load(filename)
 
+
+
     # Display the waveform
     st.subheader("Audio Waveform")
+    st.write("This is the visual representation of the original audio input")
     plot_waveform(waveform, sample_rate, title="Audio Waveform")
 
     # Resample (if needed)
@@ -87,82 +99,120 @@ if "audio_data" in locals():
         resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sample_rate)
         waveform = resampler(waveform)
 
-    # Calculate MFCCs
-    n_mfcc = 10  # Number of MFCC coefficients
-    n_fft = 20  # You can adjust this based on your audio data
-    hop_length = 10  # You can adjust this based on your audio data
 
-    # Calculate the maximum possible padding
-    max_padding = n_fft - hop_length
+    # Spectogram
+    st.subheader("Spectrograms")
+    st.write("A spectogram is a visual way of representing the strength of the signal over various frequincies\
+        in a particual waveform. In our case we see the spectogram of the input waveform. We can think of it as representing the **loudness** of the signal.")
 
-    mfcc_transform = torchaudio.transforms.MFCC(
-        sample_rate=target_sample_rate,
+    n_fft = 1024
+    win_length = None
+    hop_length = 512
+
+    # Define transform
+    spectrogram_transform = T.Spectrogram(
+        n_fft=n_fft,
+        win_length=win_length,
+        hop_length=hop_length,
+        center=True,
+        pad_mode="reflect",
+        power=2.0,
+    )
+    spectrogram = spectrogram_transform(waveform)
+    
+    plot_spectrogram(specgram=spectrogram[0], title='Spectogram')
+
+
+    # Mel Filter Bank
+    n_fft = 256
+    n_mels = 64
+    sample_rate = 6000
+
+    mel_filters = F.melscale_fbanks(
+        int(n_fft // 2 + 1),
+        n_mels=n_mels,
+        f_min=0.0,
+        f_max=sample_rate / 2.0,
+        sample_rate=sample_rate,
+        norm="slaney",
+    )
+    
+    plot_fbank(mel_filters, "Mel Filter Bank")
+    
+    
+    # MelSpectogram
+    n_fft = 1024
+    win_length = None
+    hop_length = 512
+    n_mels = 128
+
+    mel_spectrogram = T.MelSpectrogram(
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        win_length=win_length,
+        hop_length=hop_length,
+        center=True,
+        pad_mode="reflect",
+        power=2.0,
+        norm="slaney",
+        onesided=True,
+        n_mels=n_mels,
+        mel_scale="htk",
+    )
+
+    melspec = mel_spectrogram(waveform)
+    
+    plot_spectrogram(melspec[0], title="MelSpectrogram", ylabel="mel freq")
+    
+    # MFCC
+    n_fft = 2048
+    win_length = None
+    hop_length = 512
+    n_mels = 256
+    n_mfcc = 256
+
+    mfcc_transform = T.MFCC(
+        sample_rate=sample_rate,
         n_mfcc=n_mfcc,
-        melkwargs={'n_fft': max_padding, 'hop_length': hop_length}
+        melkwargs={
+            "n_fft": n_fft,
+            "n_mels": n_mels,
+            "hop_length": hop_length,
+            "mel_scale": "htk",
+        },
     )
 
     mfcc = mfcc_transform(waveform)
-
-    # Display MFCCs
-    st.subheader("MFCC")
-    for channel in range(mfcc.shape[0]):
-        plot_spectrogram(mfcc[channel], title="MFCC")
-
-    # Calculate Pitch
-    n_steps = 2  # Number of semitones to shift the pitch (adjust as needed)
-    pitch_transform = torchaudio.transforms.PitchShift(sample_rate=target_sample_rate, n_steps=n_steps)
-    pitched_waveform = pitch_transform(waveform)
-
-    # Display Pitch-shifted waveform
-    st.subheader("Pitch-shifted Audio")
-    plt.figure(figsize=(10, 4))
-    for channel in range(pitched_waveform.shape[0]):
-        plt.plot(pitched_waveform[channel].detach().numpy())  # Use detach() here
-    plt.title("Pitch-shifted Audio")
-    plt.xlabel("Sample Index")
-    plt.ylabel("Amplitude")
-    st.pyplot()
-
-    # Plot Pitch
-    pitch_transform = torchaudio.transforms.Resample(orig_freq=target_sample_rate, new_freq=100)
-    pitched_waveform_resampled = pitch_transform(pitched_waveform)
-    pitch = torchaudio.transforms.MFCC(n_mfcc=1, melkwargs={'n_fft': n_fft, 'hop_length': hop_length})(pitched_waveform_resampled)
-    plot_pitch(pitched_waveform_resampled, 100, pitch)
-
-    # Spectrograms
-    st.subheader("Spectrograms")
-
-    # Spectrogram
-    spectrogram_transform = torchaudio.transforms.Spectrogram(
-    n_fft=n_fft,
-    hop_length=hop_length
-    )
-    spectrogram = spectrogram_transform(waveform)
-
-    # Display the spectrogram using matplotlib
-    plt.figure(figsize=(10, 4))
-    plt.imshow(spectrogram[0].detach().numpy(), cmap='viridis', origin='lower', aspect='auto', extent=[0, duration, 0, target_sample_rate / 2])
-    plt.title("Spectrogram")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Frequency (Hz)")
-    plt.colorbar(format="%+2.0f dB")
-    st.pyplot(plt.gcf())  # Use st.pyplot to display the figure in Streamlit
-
-    # Mel Spectrogram
-    mel_spectrogram_transform = torchaudio.transforms.MelSpectrogram(
-        n_fft=n_fft,
-        hop_length=hop_length
-    )(waveform)
     
-    mel_spectrogram = spectrogram_transform(waveform)
-    # Display the spectrogram using matplotlib
-    plt.figure(figsize=(10, 4))
-    plt.imshow(mel_spectrogram[0].detach().numpy(), cmap='viridis', origin='lower', aspect='auto', extent=[0, duration, 0, target_sample_rate / 2])
-    plt.title("Spectrogram")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Frequency (Hz)")
-    plt.colorbar(format="%+2.0f dB")
-    st.pyplot(plt.gcf())  # Use st.pyplot to display the figure in Streamlit
+    plot_spectrogram(mfcc[0], title="MFCC")
+    
+    
+    # LFCC
+    n_fft = 2048
+    win_length = None
+    hop_length = 512
+    n_lfcc = 256
+
+    lfcc_transform = T.LFCC(
+        sample_rate=sample_rate,
+        n_lfcc=n_lfcc,
+        speckwargs={
+            "n_fft": n_fft,
+            "win_length": win_length,
+            "hop_length": hop_length,
+        },
+    )
+
+    lfcc = lfcc_transform(waveform)
+    plot_spectrogram(lfcc[0], title="LFCC")
+    
+    
+
+    # Pitch
+    pitch = F.detect_pitch_frequency(waveform, sample_rate)
+    plot_pitch(waveform, sample_rate, pitch)
+
+
 
     # Audio Player
     st.subheader("Audio Player")
