@@ -25,7 +25,7 @@ def plot_pitch(waveform, sr, pitch):
     time_axis = torch.linspace(0, end_time, pitch.shape[1])
     axis2.plot(time_axis, pitch[0], linewidth=2, label="Pitch", color="green")
 
-    axis2.legend(loc=0)
+    # axis2.legend(loc=0)
     st.pyplot(figure)  # Display the Matplotlib figure in Streamlit
 
 
